@@ -6,6 +6,19 @@ from pyrogram import Client, filters
 from pyrogram.enums import ChatAction
 from pyrogram.types import Message
 from pyrogram.errors import FloodWait
+from flask import Flask
+import threading
+
+# Render အတွက် Website အတုလေး ဆောက်တာပါ
+flask_app = Flask(__name__)
+@flask_app.route('/')
+def home(): return "Bot is Running!"
+
+def run_flask():
+    flask_app.run(host='0.0.0.0', port=10000)
+
+# Website ကို background မှာ ပေး run ထားမယ်
+threading.Thread(target=run_flask).start()
 
 # ==========================================
 # ⚙️ CONFIGS & SETUP (Cloud Optimized)
