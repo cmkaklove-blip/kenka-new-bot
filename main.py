@@ -2,137 +2,287 @@ import os
 import sys
 import asyncio
 import random
-from pyrogram import Client, filters
+import threading
+from flask import Flask
+from pyrogram import Client, filters, idle
 from pyrogram.enums import ChatAction
 from pyrogram.types import Message
 from pyrogram.errors import FloodWait
-from flask import Flask
-import threading
 
-# Render အတွက် Website အတုလေး ဆောက်တာပါ
+# ==========================================
+# 🌐 RENDER KEEP-ALIVE SERVER (FOR PORT 10000)
+# ==========================================
+# Render က Web Service အဖြစ် အသိအမှတ်ပြုဖို့အတွက် ဒီအပိုင်းက မရှိမဖြစ်လိုအပ်ပါတယ်
 flask_app = Flask(__name__)
+
 @flask_app.route('/')
-def home(): return "Bot is Running!"
+def home():
+    return "NGAZEN USERBOT IS ONLINE!"
 
 def run_flask():
+    # Render ရဲ့ Default Port 10000 မှာ Flask ကို ပေး Run တာပါ
     flask_app.run(host='0.0.0.0', port=10000)
 
-# Website ကို background မှာ ပေး run ထားမယ်
-threading.Thread(target=run_flask).start()
+# Flask ကို Background Thread အနေနဲ့ စတင်ပေးလိုက်ပါတယ်
+threading.Thread(target=run_flask, daemon=True).start()
 
 # ==========================================
-# ⚙️ CONFIGS & SETUP (Cloud Optimized)
+# ⚙️ CONFIGS & SETUP
 # ==========================================
+# GitHub Secrets သို့မဟုတ် Render Environment Variables ထဲကနေ ဆွဲဖတ်ပါတယ်
 API_ID       = int(os.getenv("API_ID", "37858091"))
 API_HASH     = os.getenv("API_HASH", "66f6dd71a5038a817706d4e737f679ff")
 OWNER_ID     = int(os.getenv("OWNER_ID", "5611725776"))
-# String Session သုံးရင် ပိုအဆင်ပြေတယ် (မရှိရင် ဖုန်းနံပါတ်တောင်းပါလိမ့်မယ်)
-STRING_SESSION = os.getenv("STRING_SESSION", None) 
+SESSION_NAME = "kenka_userbot"
 
-if STRING_SESSION:
-    app = Client("kenka_bot", api_id=API_ID, api_hash=API_HASH, session_string=STRING_SESSION)
-else:
-    app = Client("kenka_bot", api_id=API_ID, api_hash=API_HASH)
+app = Client(SESSION_NAME, api_id=API_ID, api_hash=API_HASH)
 
 # ==========================================
-# 🧠 GLOBAL STATES (Logic Storage)
+# 🧠 GLOBAL STATES (ZERO-LAG MEMORY)
 # ==========================================
-tasks = {'attack': {}, 'godhell': {}}
-hell_targets, hide_targets = set(), set()
-godhell_last_msg, speeds = {}, {'attack': 0.5, 'hell': 0.5, 'godhell': 0.5, 'typing': 1.5}
+tasks = {
+    'attack': {},
+    'godhell': {}
+}
+hell_targets = set()
+hide_targets = set()
+godhell_last_msg = {} 
+
+speeds = {
+    'attack': 0.5,
+    'hell': 0.5,
+    'godhell': 0.5,
+    'typing': 1.5
+}
 
 # ==========================================
-# 🛡️ AUTH FILTER (Owner Only)
+# 🛡️ AUTH FILTER (OWNER ONLY)
 # ==========================================
-async def is_owner(_, __, message: Message):
-    return (message.from_user and (message.from_user.is_self or message.from_user.id == OWNER_ID)) or \
-           (message.sender_chat and message.sender_chat.id == OWNER_ID)
+def is_owner_or_me(_, __, message: Message):
+    if not message.from_user: 
+        if message.sender_chat and message.sender_chat.id == OWNER_ID:
+            return True
+        return False
+    return message.from_user.is_self or message.from_user.id == OWNER_ID
 
-auth_filter = filters.create(is_owner)
+auth_filter = filters.create(is_owner_or_me)
 
 # ==========================================
-# 🛠️ HELPER LOGIC
+# 🛠️ HELPER FUNCTIONS
 # ==========================================
 def get_messages():
     try:
         with open("auto_replies.txt", "r", encoding="utf-8") as f:
-            lines = [l.strip() for l in f.readlines() if l.strip()]
+            lines = [line.strip() for line in f.readlines() if line.strip()]
             return lines if lines else ["ခွေးကောင် သေစမ်း"]
-    except: return ["ခွေးကောင် သေစမ်း"]
+    except FileNotFoundError:
+        with open("auto_replies.txt", "w", encoding="utf-8") as f:
+            f.write("ခွေးကောင် သေစမ်း\n")
+        return ["ခွေးကောင် သေစမ်း"]
 
 async def get_target(client, message):
-    if message.reply_to_message: return message.reply_to_message.from_user.id
-    parts = message.text.split()
-    if len(parts) > 1:
-        try: return (await client.get_users(parts[1])).id
-        except: return int(parts[1]) if parts[1].isdigit() else None
+    if message.reply_to_message and message.reply_to_message.from_user:
+        return message.reply_to_message.from_user.id
+    
+    text_parts = message.text.split()
+    if len(text_parts) > 1:
+        try:
+            user = await client.get_users(text_parts[1])
+            return user.id
+        except:
+            try:
+                return int(text_parts[1])
+            except:
+                pass
     return None
 
 # ==========================================
-# ⚔️ CORE COMMANDS (Logic)
+# 🛑 STOP ALL (/done)
 # ==========================================
+@app.on_message(auth_filter & (filters.command("done", prefixes="/") | filters.regex(r"^တော်ပြီ(?:\s+|$)")))
+async def stop_all_cmds(client, message):
+    for task in tasks['attack'].values(): task.cancel()
+    for task in tasks['godhell'].values(): task.cancel()
+    
+    tasks['attack'].clear()
+    tasks['godhell'].clear()
+    hell_targets.clear()
+    hide_targets.clear()
+    godhell_last_msg.clear()
+    
+    await message.reply("**✅ အကုန်ရပ်လိုက်ပါပြီ!**")
 
-# 1. Stop All Logic
-@app.on_message(auth_filter & (filters.command("done", "/") | filters.regex("^တော်ပြီ")))
-async def stop_all(c, m):
-    [t.cancel() for t in list(tasks['attack'].values()) + list(tasks['godhell'].values())]
-    tasks['attack'].clear(); tasks['godhell'].clear(); hell_targets.clear(); hide_targets.clear()
-    await m.reply("**🛑 အကုန်ရပ်လိုက်ပြီ!**")
+# ==========================================
+# ⚔️ ATTACK MODE (/attack)
+# ==========================================
+@app.on_message(auth_filter & (filters.command("attack", prefixes="/") | filters.regex(r"^တဗဲ့ရိုက်(?:\s+|$)")))
+async def start_attack(client, message):
+    target_id = await get_target(client, message)
+    if not target_id:
+        await message.reply("**⚠️ ဘယ်ကောင်လဲ ရွေးပေးပါဦး...**")
+        return
+    
+    await message.reply("**⚔️ Operation စတင်ပြီ!**")
+    
+    if target_id in tasks['attack']:
+        tasks['attack'][target_id].cancel()
+        
+    tasks['attack'][target_id] = asyncio.create_task(attack_loop(client, message.chat.id, target_id))
 
-# 2. Attack Logic (Looping)
-@app.on_message(auth_filter & (filters.command("attack", "/") | filters.regex("^တဗဲ့ရိုက်")))
-async def start_attack(c, m):
-    target = await get_target(c, m)
-    if not target: return await m.reply("**⚠️ Target ရွေးပါ!**")
-    await m.reply("**⚔️ Attack စတင်နေပြီ...**")
-    tasks['attack'][target] = asyncio.create_task(attack_loop(c, m.chat.id, target))
-
-async def attack_loop(c, chat_id, target):
+async def attack_loop(client, chat_id, target_id):
     try:
-        mention = (await c.get_users(target)).mention
-        while True:
-            for line in get_messages():
-                await c.send_chat_action(chat_id, ChatAction.TYPING)
-                await asyncio.sleep(speeds['typing'])
-                await c.send_message(chat_id, f"{mention} {line}")
-                await asyncio.sleep(speeds['attack'])
-    except asyncio.CancelledError: pass
+        user = await client.get_users(target_id)
+        mention = user.mention
+    except:
+        mention = f"ဟေ့ကောင် {target_id}"
 
-# 3. Hell Logic (Watcher Pattern)
-@app.on_message(auth_filter & (filters.command("hell", "/") | filters.regex("^@NgazenX")))
-async def set_hell(c, m):
-    target = await get_target(c, m)
-    if target: hell_targets.add(target); await m.reply("**🔥 Hell Mode On!**")
+    while True:
+        try:
+            lines = get_messages()
+            for line in lines:
+                await client.send_chat_action(chat_id, ChatAction.TYPING)
+                await asyncio.sleep(speeds['typing']) 
+                try:
+                    await client.send_message(chat_id, f"{mention} {line}")
+                except Exception:
+                    continue
+                await asyncio.sleep(speeds['attack'])
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            await asyncio.sleep(1)
+
+# ==========================================
+# 🔥 HELL MODE (/hell)
+# ==========================================
+@app.on_message(auth_filter & (filters.command("hell", prefixes="/") | filters.regex(r"^@NgazenX(?:\s+|$)")))
+async def start_hell(client, message):
+    target_id = await get_target(client, message)
+    if not target_id:
+        await message.reply("**⚠️ ဘယ်ကောင်လဲ ရွေးပေးပါဦး...**")
+        return
+    hell_targets.add(target_id)
+    await message.reply("**🔥 Hell Mode Activated!**")
 
 @app.on_message(filters.all, group=1)
-async def hell_watcher(c, m):
-    if m.from_user and m.from_user.id in hell_targets:
-        for _ in range(4):
-            await c.send_chat_action(m.chat.id, ChatAction.TYPING)
-            await asyncio.sleep(speeds['typing'])
-            await m.reply(random.choice(get_messages()))
-            await asyncio.sleep(speeds['hell'])
+async def hell_watcher(client, message):
+    if message.from_user and message.from_user.id in hell_targets:
+        asyncio.create_task(hell_reply_task(client, message))
 
-# 4. Hide Logic (Ghost Mode)
-@app.on_message(auth_filter & (filters.command("hide", "/") | filters.regex("^အာဏာပြလိုက်")))
-async def set_hide(c, m):
-    target = await get_target(c, m)
-    if target: hide_targets.add(target); await m.reply("**👻 Hide Mode On!**")
+async def hell_reply_task(client, message):
+    try:
+        lines = get_messages()
+        for i in range(4):
+            await client.send_chat_action(message.chat.id, ChatAction.TYPING)
+            await asyncio.sleep(speeds['typing'])
+            try:
+                line = random.choice(lines)
+                await message.reply(line, quote=True)
+            except Exception:
+                continue
+            await asyncio.sleep(speeds['hell'])
+    except Exception:
+        pass
+
+# ==========================================
+# 😈 GODHELL MODE (/godhell)
+# ==========================================
+@app.on_message(auth_filter & (filters.command("godhell", prefixes="/") | filters.regex(r"^ရိုက်ကွာ(?:\s+|$)")))
+async def start_godhell(client, message):
+    target_id = await get_target(client, message)
+    if not target_id:
+        await message.reply("**⚠️ ဘယ်ကောင်လဲ ရွေးပေးပါဦး...**")
+        return
+    
+    await message.reply("**😈 GodHell Started!**")
+    
+    if target_id in tasks['godhell']:
+        tasks['godhell'][target_id].cancel()
+        
+    if message.reply_to_message and message.reply_to_message.from_user and message.reply_to_message.from_user.id == target_id:
+        godhell_last_msg[target_id] = (message.chat.id, message.reply_to_message.id)
+        
+    tasks['godhell'][target_id] = asyncio.create_task(godhell_loop(client, target_id))
 
 @app.on_message(filters.all, group=2)
-async def hide_watcher(c, m):
-    if m.from_user and m.from_user.id in hide_targets:
-        try: await m.delete()
-        except: pass
+async def godhell_watcher(client, message):
+    if message.from_user and message.from_user.id in tasks['godhell']:
+        godhell_last_msg[message.from_user.id] = (message.chat.id, message.id)
+
+async def godhell_loop(client, target_id):
+    while True:
+        try:
+            if target_id in godhell_last_msg:
+                chat_id, msg_id = godhell_last_msg[target_id]
+                lines = get_messages()
+                line = random.choice(lines)
+                await client.send_chat_action(chat_id, ChatAction.TYPING)
+                await asyncio.sleep(speeds['typing'])
+                try:
+                    await client.send_message(chat_id, line, reply_to_message_id=msg_id)
+                except Exception:
+                    pass
+            await asyncio.sleep(speeds['godhell'])
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            await asyncio.sleep(1)
 
 # ==========================================
-# 📢 UTILS & STARTUP
+# 📢 OTHER UTILS (HIDE, BROADCAST, DB)
 # ==========================================
-@app.on_message(auth_filter & (filters.command("show", "/") | filters.regex("^[Ss]how$")))
-async def menu(c, m):
-    await m.reply("**☠️ NGAZEN PRO MENU**\n\n`/attack` - ဆက်တိုက်ဆဲ\n`/hell` - သူပို့ရင်ပြန်ဆဲ\n`/hide` - စာဖျက်\n`/done` - ရပ်ရန်")
+@app.on_message(auth_filter & (filters.command("hide", prefixes="/") | filters.regex(r"^အာဏာပြလိုက်(?:\s+|$)")))
+async def start_hide(client, message):
+    target_id = await get_target(client, message)
+    if not target_id:
+        await message.reply("**⚠️ ဘယ်ကောင်လဲ ရွေးပေးပါဦး...**")
+        return
+    hide_targets.add(target_id)
+    await message.reply("**👻 Ghost Mode On!**")
+
+@app.on_message(filters.all, group=3)
+async def hide_watcher(client, message):
+    if message.from_user and message.from_user.id in hide_targets:
+        asyncio.create_task(delete_msg_task(message))
+
+async def delete_msg_task(message):
+    try:
+        await asyncio.sleep(0.1)
+        await message.delete()
+    except Exception:
+        pass
+
+@app.on_message(auth_filter & filters.command("show", prefixes="/"))
+async def show_commands(client, message):
+    cmds = """
+╭━━ ☠️ **NGAZEN USERBOT PRO** ☠️ ━━╮
+➤ `/attack` » တဗဲ့ရိုက်
+➤ `/hell` » @NgazenX
+➤ `/godhell` » ရိုက်ကွာ
+➤ `/hide` » အာဏာပြလိုက်
+➤ `/done` » တော်ပြီ 🛑
+➤ `/show` » ဒီ Menu ကိုပြမယ်
+╰━━━━━━━━━━━━━━━━━━━━━╯
+    """
+    await message.reply(cmds)
+
+# ==========================================
+# 🚀 ASYNC MAIN ENTRY (FIX FOR RUNTIMERROR)
+# ==========================================
+async def main():
+    print("="*50)
+    print(" ☠️  NGAZEN USERBOT V2 - PRO EDITION INITIALIZING... ")
+    await app.start()
+    print(" >>> BOT STARTED SUCCESSFULLY! ")
+    print("="*50)
+    await idle() # Bot ကို အမြဲတမ်း Run ထားပေးမယ်
+    await app.stop()
 
 if __name__ == "__main__":
-    print(">>> BOT STARTED! <<<")
-    app.run()
-  
+    # Event loop အသစ်ဆောက်ပြီး Main function ကို run ပါတယ် (Python 3.12+ error ရှင်းရန်)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(main())
+    except KeyboardInterrupt:
+        pass
