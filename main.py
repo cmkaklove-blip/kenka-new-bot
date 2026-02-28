@@ -4,35 +4,30 @@ import asyncio
 import random
 import threading
 from flask import Flask
-from pyrogram import Client, filters, idle
+from pyrogram import Client, filters
 from pyrogram.enums import ChatAction
 from pyrogram.types import Message
 from pyrogram.errors import FloodWait
 
 # ==========================================
-# 🌐 RENDER KEEP-ALIVE SERVER (FOR PORT 10000)
+# 🌐 RENDER WEB SERVER (PORT BINDING FIX)
 # ==========================================
-# Render က Web Service အဖြစ် အသိအမှတ်ပြုဖို့အတွက် ဒီအပိုင်းက မရှိမဖြစ်လိုအပ်ပါတယ်
-flask_app = Flask(__name__)
+web_app = Flask(__name__)
 
-@flask_app.route('/')
+@web_app.route('/')
 def home():
-    return "NGAZEN USERBOT IS ONLINE!"
+    return "NGAZEN USERBOT PRO IS ALIVE AND RUNNING!"
 
-def run_flask():
-    # Render ရဲ့ Default Port 10000 မှာ Flask ကို ပေး Run တာပါ
-    flask_app.run(host='0.0.0.0', port=10000)
-
-# Flask ကို Background Thread အနေနဲ့ စတင်ပေးလိုက်ပါတယ်
-threading.Thread(target=run_flask, daemon=True).start()
+def run_web():
+    port = int(os.environ.get("PORT", 10000))
+    web_app.run(host="0.0.0.0", port=port)
 
 # ==========================================
 # ⚙️ CONFIGS & SETUP
 # ==========================================
-# GitHub Secrets သို့မဟုတ် Render Environment Variables ထဲကနေ ဆွဲဖတ်ပါတယ်
-API_ID       = int(os.getenv("API_ID", "37858091"))
-API_HASH     = os.getenv("API_HASH", "66f6dd71a5038a817706d4e737f679ff")
-OWNER_ID     = int(os.getenv("OWNER_ID", "5611725776"))
+API_ID       = int(os.getenv("API_ID",  "37858091"))
+API_HASH     = os.getenv("API_HASH",   "66f6dd71a5038a817706d4e737f679ff")
+OWNER_ID     = int(os.getenv("OWNER_ID",  "5611725776"))
 SESSION_NAME = "kenka_userbot"
 
 app = Client(SESSION_NAME, api_id=API_ID, api_hash=API_HASH)
@@ -41,18 +36,19 @@ app = Client(SESSION_NAME, api_id=API_ID, api_hash=API_HASH)
 # 🧠 GLOBAL STATES (ZERO-LAG MEMORY)
 # ==========================================
 tasks = {
-    'attack': {},
-    'godhell': {}
+    'attack': {},   # target_id: asyncio.Task
+    'godhell': {}   # target_id: asyncio.Task
 }
 hell_targets = set()
 hide_targets = set()
-godhell_last_msg = {} 
+godhell_last_msg = {} # target_id: (chat_id, message_id)
 
+# Default Speeds
 speeds = {
-    'attack': 0.5,
+    'attack': 0.5,  # ကြားထဲမှာနားမယ့်အချိန်
     'hell': 0.5,
     'godhell': 0.5,
-    'typing': 1.5
+    'typing': 1.5   # Typing ပေါ်မယ့်အချိန်
 }
 
 # ==========================================
@@ -83,7 +79,6 @@ def get_messages():
 async def get_target(client, message):
     if message.reply_to_message and message.reply_to_message.from_user:
         return message.reply_to_message.from_user.id
-    
     text_parts = message.text.split()
     if len(text_parts) > 1:
         try:
@@ -97,36 +92,31 @@ async def get_target(client, message):
     return None
 
 # ==========================================
-# 🛑 STOP ALL (/done)
+# 🛑 STOP ALL (/done | ရပ်လိုက်)
 # ==========================================
 @app.on_message(auth_filter & (filters.command("done", prefixes="/") | filters.regex(r"^တော်ပြီ(?:\s+|$)")))
 async def stop_all_cmds(client, message):
     for task in tasks['attack'].values(): task.cancel()
     for task in tasks['godhell'].values(): task.cancel()
-    
     tasks['attack'].clear()
     tasks['godhell'].clear()
     hell_targets.clear()
     hide_targets.clear()
     godhell_last_msg.clear()
-    
-    await message.reply("**✅ အကုန်ရပ်လိုက်ပါပြီ!**")
+    await message.reply("**✅ အကုန်ရပ်လိုက်ပါပြီ! Operation Cancelled.**")
 
 # ==========================================
-# ⚔️ ATTACK MODE (/attack)
+# ⚔️ ATTACK MODE (/attack | တဗဲ့ရိုက်)
 # ==========================================
 @app.on_message(auth_filter & (filters.command("attack", prefixes="/") | filters.regex(r"^တဗဲ့ရိုက်(?:\s+|$)")))
 async def start_attack(client, message):
     target_id = await get_target(client, message)
     if not target_id:
-        await message.reply("**⚠️ ဘယ်ကောင်လဲ ရွေးပေးပါဦး...**")
+        await message.reply("**⚠️ ဘယ်ကောင်လဲ ရွေးပေးပါဦး...** (Reply သို့မဟုတ် ID/Mention တွဲရေးပါ)")
         return
-    
-    await message.reply("**⚔️ Operation စတင်ပြီ!**")
-    
+    await message.reply("**⚔️ Attack Operation စတင်ပြီ!**")
     if target_id in tasks['attack']:
         tasks['attack'][target_id].cancel()
-        
     tasks['attack'][target_id] = asyncio.create_task(attack_loop(client, message.chat.id, target_id))
 
 async def attack_loop(client, chat_id, target_id):
@@ -153,7 +143,7 @@ async def attack_loop(client, chat_id, target_id):
             await asyncio.sleep(1)
 
 # ==========================================
-# 🔥 HELL MODE (/hell)
+# 🔥 HELL MODE (/hell | @NgazenX)
 # ==========================================
 @app.on_message(auth_filter & (filters.command("hell", prefixes="/") | filters.regex(r"^@NgazenX(?:\s+|$)")))
 async def start_hell(client, message):
@@ -162,7 +152,7 @@ async def start_hell(client, message):
         await message.reply("**⚠️ ဘယ်ကောင်လဲ ရွေးပေးပါဦး...**")
         return
     hell_targets.add(target_id)
-    await message.reply("**🔥 Hell Mode Activated!**")
+    await message.reply("**🔥 ငဇန် အမိန့်အတိုင်း ဟိုကောင့်ကို Hell ထဲ ပို့လိုက်ပြီ!**")
 
 @app.on_message(filters.all, group=1)
 async def hell_watcher(client, message):
@@ -172,7 +162,7 @@ async def hell_watcher(client, message):
 async def hell_reply_task(client, message):
     try:
         lines = get_messages()
-        for i in range(4):
+        for i in range(4): # သူပို့တိုင်း ၄ ကြောင်းပြန်မယ်
             await client.send_chat_action(message.chat.id, ChatAction.TYPING)
             await asyncio.sleep(speeds['typing'])
             try:
@@ -185,7 +175,7 @@ async def hell_reply_task(client, message):
         pass
 
 # ==========================================
-# 😈 GODHELL MODE (/godhell)
+# 😈 GODHELL MODE (/godhell | ရိုက်ကွာ)
 # ==========================================
 @app.on_message(auth_filter & (filters.command("godhell", prefixes="/") | filters.regex(r"^ရိုက်ကွာ(?:\s+|$)")))
 async def start_godhell(client, message):
@@ -193,15 +183,11 @@ async def start_godhell(client, message):
     if not target_id:
         await message.reply("**⚠️ ဘယ်ကောင်လဲ ရွေးပေးပါဦး...**")
         return
-    
     await message.reply("**😈 GodHell Started!**")
-    
     if target_id in tasks['godhell']:
         tasks['godhell'][target_id].cancel()
-        
     if message.reply_to_message and message.reply_to_message.from_user and message.reply_to_message.from_user.id == target_id:
         godhell_last_msg[target_id] = (message.chat.id, message.reply_to_message.id)
-        
     tasks['godhell'][target_id] = asyncio.create_task(godhell_loop(client, target_id))
 
 @app.on_message(filters.all, group=2)
@@ -229,7 +215,7 @@ async def godhell_loop(client, target_id):
             await asyncio.sleep(1)
 
 # ==========================================
-# 📢 OTHER UTILS (HIDE, BROADCAST, DB)
+# 👻 HIDE MODE (/hide | အာဏာပြလိုက်)
 # ==========================================
 @app.on_message(auth_filter & (filters.command("hide", prefixes="/") | filters.regex(r"^အာဏာပြလိုက်(?:\s+|$)")))
 async def start_hide(client, message):
@@ -238,7 +224,7 @@ async def start_hide(client, message):
         await message.reply("**⚠️ ဘယ်ကောင်လဲ ရွေးပေးပါဦး...**")
         return
     hide_targets.add(target_id)
-    await message.reply("**👻 Ghost Mode On!**")
+    await message.reply("**👻 ကဲ ငဇန် အမိန့်ပဲ... ဟိုကောင့်စာတွေ အကုန်ဖျက်မယ်!**")
 
 @app.on_message(filters.all, group=3)
 async def hide_watcher(client, message):
@@ -252,37 +238,159 @@ async def delete_msg_task(message):
     except Exception:
         pass
 
-@app.on_message(auth_filter & filters.command("show", prefixes="/"))
+# ==========================================
+# ⚙️ SPEED CONTROLS (Full Logic Added)
+# ==========================================
+@app.on_message(auth_filter & filters.command("speed", prefixes="/"))
+async def set_attack_speed(client, message):
+    if len(message.command) > 1:
+        try:
+            speeds['attack'] = float(message.command[1])
+            await message.reply(f"**⚡ Attack အမြန်နှုန်း {speeds['attack']}s သို့ ပြောင်းလိုက်ပါပြီ။**")
+        except ValueError:
+            await message.reply("**⚠️ ဂဏန်းထည့်ပါ...**")
+    else:
+        await message.reply(f"**⚡ လက်ရှိ Attack မြန်နှုန်း:** {speeds['attack']}s")
+
+@app.on_message(auth_filter & filters.command("speedhell", prefixes="/"))
+async def set_hell_speed(client, message):
+    if len(message.command) > 1:
+        try:
+            speeds['hell'] = float(message.command[1])
+            await message.reply(f"**🔥 Hell အမြန်နှုန်း {speeds['hell']}s သို့ ပြောင်းလိုက်ပါပြီ။**")
+        except ValueError:
+            await message.reply("**⚠️ ဂဏန်းထည့်ပါ...**")
+    else:
+        await message.reply(f"**🔥 လက်ရှိ Hell မြန်နှုန်း:** {speeds['hell']}s")
+
+@app.on_message(auth_filter & filters.command("godspeed", prefixes="/"))
+async def set_god_speed(client, message):
+    if len(message.command) > 1:
+        try:
+            speeds['godhell'] = float(message.command[1])
+            await message.reply(f"**😈 GodHell အမြန်နှုန်း {speeds['godhell']}s သို့ ပြောင်းလိုက်ပါပြီ။**")
+        except ValueError:
+            await message.reply("**⚠️ ဂဏန်းထည့်ပါ...**")
+    else:
+        await message.reply(f"**😈 လက်ရှိ GodHell မြန်နှုန်း:** {speeds['godhell']}s")
+
+# ==========================================
+# 📢 BROADCAST
+# ==========================================
+@app.on_message(auth_filter & filters.command("broadcast", prefixes="/"))
+async def broadcast_msg(client, message):
+    if not message.reply_to_message:
+        await message.reply("**⚠️ Reply လုပ်ပြီးမှ သုံးပါ...**")
+        return
+    status_msg = await message.reply("**📢 Broadcast စတင်နေပြီ...**")
+    success, failed = 0, 0
+    async for dialog in client.get_dialogs():
+        if dialog.chat.id == message.chat.id:
+            continue
+        try:
+            await client.send_chat_action(dialog.chat.id, ChatAction.TYPING)
+            await asyncio.sleep(0.2)
+            await message.reply_to_message.copy(dialog.chat.id)
+            success += 1
+        except FloodWait as e:
+            await asyncio.sleep(e.value)
+        except Exception:
+            failed += 1
+    await status_msg.edit(f"**✅ Broadcast ပြီးဆုံး!**\n**✓ အောင်မြင်:** {success}\n**✗ ကျရှုံး:** {failed}")
+
+# ==========================================
+# 📝 MESSAGE MANAGEMENT
+# ==========================================
+@app.on_message(auth_filter & filters.command("add_message", prefixes="/"))
+async def add_txt(client, message):
+    if len(message.command) < 2:
+        await message.reply("**⚠️ ထည့်ချင်တဲ့ စာသားရေးပါ...**")
+        return
+    text = message.text.split(maxsplit=1)[1]
+    if text:
+        with open("auto_replies.txt", "a", encoding="utf-8") as f:
+            f.write(text + "\n")
+        await message.reply(f"**✅ စာသားအသစ် ထည့်သွင်းပြီးပါပြီ**\n`{text}`")
+
+@app.on_message(auth_filter & filters.command("list_messages", prefixes="/"))
+async def list_messages(client, message):
+    lines = get_messages()
+    msg_list = "\n".join([f"**{i+1}.** `{line}`" for i, line in enumerate(lines)])
+    await message.reply(f"**📋 လက်ရှိ ဆဲမယ့် စာသားများ**\n\n{msg_list}")
+
+@app.on_message(auth_filter & filters.command("remove_message", prefixes="/"))
+async def remove_message(client, message):
+    if len(message.command) < 2:
+        await message.reply("**⚠️ ဖျက်ချင်တဲ့ နံပါတ် ထည့်ပါ...**")
+        return
+    try:
+        index = int(message.command[1]) - 1
+        lines = get_messages()
+        if 0 <= index < len(lines):
+            removed = lines.pop(index)
+            with open("auto_replies.txt", "w", encoding="utf-8") as f:
+                f.write("\n".join(lines) + ("\n" if lines else ""))
+            await message.reply(f"**🗑️ စာသားဖျက်လိုက်ပါပြီ**\n`{removed}`")
+        else:
+            await message.reply("**⚠️ နံပါတ် မှားနေပါတယ်။**")
+    except ValueError:
+        await message.reply("**⚠️ ဂဏန်းပဲ ထည့်ပါ။**")
+
+# ==========================================
+# 💎 SHOW MENU (/show)
+# ==========================================
+@app.on_message(auth_filter & (filters.command("show", prefixes="/") | filters.regex(r"^[Ss]how$")))
 async def show_commands(client, message):
     cmds = """
 ╭━━ ☠️ **NGAZEN USERBOT PRO** ☠️ ━━╮
-➤ `/attack` » တဗဲ့ရိုက်
-➤ `/hell` » @NgazenX
-➤ `/godhell` » ရိုက်ကွာ
-➤ `/hide` » အာဏာပြလိုက်
-➤ `/done` » တော်ပြီ 🛑
-➤ `/show` » ဒီ Menu ကိုပြမယ်
+
+**⚔️ ATTACK MODES (တိုက်ခိုက်ရေး)**
+➤ `/attack` or `တဗဲ့ရိုက်` 
+➤ `/hell` or `@NgazenX` 
+➤ `/godhell` or `ရိုက်ကွာ` 
+➤ `/hide` or `အာဏာပြလိုက်` 
+➤ `/done` or `တော်ပြီ` 
+
+**⚙️ SPEED CONTROLS (မြန်နှုန်း)**
+➤ `/speed [sec]` » Attack အမြန်နှုန်း
+➤ `/speedhell [sec]` » Hell အမြန်နှုန်း
+➤ `/godspeed [sec]` » GodHell အမြန်နှုန်း
+
+**📝 MESSAGE DB (စာသားစီမံရန်)**
+➤ `/add_message [စာသား]` » စာထည့်ရန်
+➤ `/list_messages` » စာရင်းကြည့်ရန်
+➤ `/remove_message [နံပါတ်]` » စာဖျက်ရန်
+
+**🌐 UTILS (အခြား)**
+➤ `/broadcast` » Reply စာကို Group အကုန်ပို့မယ်
+➤ `/show` သို့မဟုတ် `show` » ဒီ Menu ကိုပြမယ်
+➤ `/restart` » Bot ကို ပြန်ဖွင့်မယ်
+
 ╰━━━━━━━━━━━━━━━━━━━━━╯
     """
     await message.reply(cmds)
 
 # ==========================================
-# 🚀 ASYNC MAIN ENTRY (FIX FOR RUNTIMERROR)
+# 🔄 RESTART
 # ==========================================
-async def main():
-    print("="*50)
-    print(" ☠️  NGAZEN USERBOT V2 - PRO EDITION INITIALIZING... ")
-    await app.start()
-    print(" >>> BOT STARTED SUCCESSFULLY! ")
-    print("="*50)
-    await idle() # Bot ကို အမြဲတမ်း Run ထားပေးမယ်
-    await app.stop()
+@app.on_message(auth_filter & filters.command("restart", prefixes="/"))
+async def restart_bot(client, message):
+    await message.reply("**🔄 System Rebooting... ပြန်ဖွင့်နေပါပြီ!**")
+    os.execl(sys.executable, sys.executable, *sys.argv)
 
+# ==========================================
+# 🚀 RUN BOT & WEB SERVER
+# ==========================================
 if __name__ == "__main__":
-    # Event loop အသစ်ဆောက်ပြီး Main function ကို run ပါတယ် (Python 3.12+ error ရှင်းရန်)
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        loop.run_until_complete(main())
-    except KeyboardInterrupt:
-        pass
+    os.system('clear' if os.name == 'posix' else 'cls')
+    print("="*50)
+    print(" ☠️  NGAZEN USERBOT V2 - PRO EDITION INITIALIZING...  ☠️ ")
+    
+    # Start Flask Web Server in Background Thread
+    threading.Thread(target=run_web, daemon=True).start()
+    print(" >>> WEB SERVER STARTED (PORT BINDING SUCCESS) ")
+    
+    # Start Telegram Bot
+    print(" >>> WAITING FOR COMMANDS... ")
+    print("="*50)
+    app.run()
